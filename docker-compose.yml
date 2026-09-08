@@ -1,0 +1,74 @@
+services:
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  task-gateway:
+    build: ./services/worker
+    command: uvicorn app.gateway:app --host 0.0.0.0 --port 8000
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/tox_documents
+      REDIS_URL: redis://redis:6379/0
+      MOCK_PROCESSING_DELAY_SECONDS: ${MOCK_PROCESSING_DELAY_SECONDS:-4}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./services/worker
+    command: celery -A app.celery_app.celery worker --loglevel=INFO --concurrency=2
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/tox_documents
+      REDIS_URL: redis://redis:6379/0
+      MOCK_PROCESSING_DELAY_SECONDS: ${MOCK_PROCESSING_DELAY_SECONDS:-4}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    build: ./services/api
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      MONGODB_URI: mongodb://mongo:27017/tox_documents
+      TASK_GATEWAY_URL: http://task-gateway:8000
+    depends_on:
+      mongo:
+        condition: service_healthy
+      task-gateway:
+        condition: service_started
+
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    depends_on:
+      - api
+
+volumes:
+  mongo-data:

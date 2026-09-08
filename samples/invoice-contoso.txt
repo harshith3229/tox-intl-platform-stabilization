@@ -1,0 +1,4 @@
+INVOICE CO-7781
+Supplier: Example Logistics Services
+Total: INR 8499.50
+Date: 2026-08-03

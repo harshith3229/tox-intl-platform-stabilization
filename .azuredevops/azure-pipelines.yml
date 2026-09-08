@@ -1,0 +1,37 @@
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '22.x'
+    displayName: Use Node.js 22
+
+  - script: npm install
+    displayName: Install Node dependencies
+
+  - script: npm run lint
+    displayName: Lint
+
+  - script: npm run typecheck
+    displayName: Type check
+
+  - script: npm test
+    displayName: Test Node services
+
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.12'
+    displayName: Use Python 3.12
+
+  - script: pip install -r services/worker/requirements-dev.txt
+    displayName: Install worker dependencies
+
+  - script: pytest services/worker/tests
+    displayName: Test worker
+
+  - script: docker compose config --quiet
+    displayName: Validate Compose configuration

@@ -1,0 +1,5 @@
+celery[redis]==5.4.0
+fastapi==0.115.11
+pydantic==2.10.6
+pymongo==4.11.2
+uvicorn[standard]==0.34.0

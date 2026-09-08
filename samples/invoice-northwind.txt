@@ -1,0 +1,4 @@
+INVOICE NW-1042
+Supplier: Example Office Supplies
+Total: INR 12450.00
+Date: 2026-08-01
