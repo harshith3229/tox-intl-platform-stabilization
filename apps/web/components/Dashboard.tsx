@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api, type DemoUser, type DocumentItem } from '@/lib/api';
+import { hasActiveDocuments, POLL_INTERVAL_MS } from '@/lib/polling';
 import { StatusBadge } from './StatusBadge';
 import { UserSelector } from './UserSelector';
 
@@ -38,6 +39,17 @@ export function Dashboard() {
       cancelled = true;
     };
   }, [user]);
+
+  // Keep the list fresh while any job is still queued/processing -- without
+  // this, a job that finishes server-side never appears as finished until
+  // the user re-uploads or manually navigates (Issue B1, see BUG_MAP.md).
+  useEffect(() => {
+    if (!hasActiveDocuments(items)) return;
+    const intervalId = setInterval(() => {
+      load();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [items, load]);
 
   async function upload() {
     if (!file) return;

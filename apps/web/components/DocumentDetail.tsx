@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { api, type DemoUser, type DocumentItem } from '@/lib/api';
+import { isActiveStatus, POLL_INTERVAL_MS } from '@/lib/polling';
 import { StatusBadge } from './StatusBadge';
 import { UserSelector } from './UserSelector';
 
@@ -42,6 +43,17 @@ export function DocumentDetail({ documentId, initialUser }: Props) {
       cancelled = true;
     };
   }, [documentId, user]);
+
+  // Same as Dashboard: keep polling while the job hasn't reached a terminal
+  // state, so a result that lands server-side is reflected without the user
+  // having to click Refresh (Issue B1, see BUG_MAP.md).
+  useEffect(() => {
+    if (!item || !isActiveStatus(item.status)) return;
+    const intervalId = setInterval(() => {
+      load();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(intervalId);
+  }, [item, load]);
 
   async function retry() {
     try {
