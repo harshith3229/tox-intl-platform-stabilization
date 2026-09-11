@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any, Protocol
 
 from bson import ObjectId
 from pymongo import MongoClient
@@ -15,6 +16,41 @@ def processing_delay(attempt: int) -> float:
     if attempt == 1:
         return MOCK_PROCESSING_DELAY_SECONDS * 2
     return max(0.5, MOCK_PROCESSING_DELAY_SECONDS / 2)
+
+
+class UpdateResult(Protocol):
+    matched_count: int
+
+
+class RecordsCollection(Protocol):
+    def update_one(self, filter_: dict[str, Any], update: dict[str, Any]) -> UpdateResult: ...
+
+
+def apply_attempt_guarded_update(
+    records: RecordsCollection,
+    object_id: ObjectId,
+    attempt: int,
+    fields: dict[str, object],
+) -> UpdateResult:
+    """Write status/result fields for a document, but only while it is still on
+    the given attempt.
+
+    Retries bump the document's `attempt` counter (see the API's /retry route).
+    Without this guard, a slow in-flight task from a superseded attempt can
+    finish after a newer retry and unconditionally overwrite its result -- the
+    document ends up with a higher `attempt` number but the *older* attempt's
+    data. Scoping every write to `{"_id": object_id, "attempt": attempt}` makes
+    a stale write a safe no-op instead of a silent overwrite.
+    """
+    result = records.update_one({"_id": object_id, "attempt": attempt}, {"$set": fields})
+    if result.matched_count == 0:
+        logger.info(
+            "document_processing_stale_write_skipped document_id=%s attempt=%s fields=%s",
+            object_id,
+            attempt,
+            sorted(fields.keys()),
+        )
+    return result
 
 
 @celery.task(name="app.tasks.process_document", bind=True, max_retries=2)
@@ -36,36 +72,35 @@ def process_document(
         organisation_id,
         attempt,
     )
-    records.update_one({"_id": object_id}, {"$set": {"status": "processing"}})
+    apply_attempt_guarded_update(records, object_id, attempt, {"status": "processing"})
 
     try:
         time.sleep(processing_delay(attempt))
         result = extract_document(source_text)
         result["summary"] = f"{result['summary']} (attempt {attempt})"
 
-        records.update_one(
-            {"_id": object_id},
-            {
-                "$set": {
-                    "status": "completed",
-                    "result": result,
-                    "errorMessage": None,
-                }
-            },
-        )
-        logger.info(
-            "document_processing_completed document_id=%s attempt=%s file_name=%s",
-            document_id,
+        completion = apply_attempt_guarded_update(
+            records,
+            object_id,
             attempt,
-            file_name,
+            {"status": "completed", "result": result, "errorMessage": None},
         )
+        if completion.matched_count:
+            logger.info(
+                "document_processing_completed document_id=%s attempt=%s file_name=%s",
+                document_id,
+                attempt,
+                file_name,
+            )
         return {"documentId": document_id, "attempt": attempt, "status": "completed"}
     except Exception as exc:
-        records.update_one(
-            {"_id": object_id},
-            {"$set": {"status": "failed", "errorMessage": "Processing failed"}},
+        failure = apply_attempt_guarded_update(
+            records, object_id, attempt, {"status": "failed", "errorMessage": "Processing failed"}
         )
-        logger.exception("document_processing_failed document_id=%s attempt=%s", document_id, attempt)
+        if failure.matched_count:
+            logger.exception(
+                "document_processing_failed document_id=%s attempt=%s", document_id, attempt
+            )
         raise self.retry(exc=exc, countdown=2**self.request.retries) from exc
     finally:
         client.close()
