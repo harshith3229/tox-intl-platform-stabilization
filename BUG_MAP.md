@@ -229,3 +229,55 @@ still produces a *correct* result, just twice.
 Add a unique compound index on `{ organisationId: 1, uploadFingerprint: 1 }`; in the `POST /`
 handler, `findOne` for an existing record with that fingerprint first (or catch the unique-
 index violation) and return the existing record instead of creating a new one.
+
+---
+
+## Independent findings
+
+Two additional risks identified while investigating the supplied scope, distinct from the
+three reported symptoms above. Not fixed in this submission (out of the required two-fix
+budget); documented per the assignment's "additional engineering judgement" requirement.
+
+### Finding 1 — task-gateway trusts the caller's `organisationId` with no cross-check (non-visual, security/authorization)
+
+**Evidence:** [`services/worker/app/gateway.py`](services/worker/app/gateway.py) accepts a
+`ProcessingJob` (`documentId`, `organisationId`, `attempt`, `fileName`, `sourceText`) over
+plain HTTP with no authentication, and never verifies that `organisationId` actually matches
+the `organisationId` already stored on `documentId` in MongoDB before enqueuing — it simply
+trusts whatever the caller claims and the worker writes back to that same `_id` regardless.
+Today the only caller is the API's `enqueueProcessing()`, which populates the field
+honestly, so this isn't currently exploitable end-to-end. But there is no second line of
+defense: the gateway container publishes no port to the host today (`docker-compose.yml`
+has no `ports:` entry for `task-gateway`), so the blast radius is limited to whatever else
+runs on the Docker network — but that is topology-dependent hardening, not an
+application-level control.
+
+**Severity:** Medium (defense-in-depth gap, not independently exploitable today).
+**Impact:** If any other internal service ever gained network access to the gateway (or a
+future change exposed its port), it could enqueue a job that overwrites a document's status
+under an `organisationId` that doesn't match its real owner — a "confused deputy" that would
+undermine the Issue C fix from a different angle.
+**Next action:** Add a check in the worker task (or the gateway) that the document's stored
+`organisationId` matches the job's claimed `organisationId` before writing, and/or put a
+shared secret / mTLS between the API and the gateway.
+
+### Finding 2 — no signal to distinguish "not found" from "blocked cross-tenant attempt" (non-visual, observability/security)
+
+**Evidence:** After the Issue C fix, `GET /api/documents/:id` returns a generic `404` both
+when the id genuinely doesn't exist and when it exists but belongs to another organisation
+(intentional, to avoid leaking existence — see the fix rationale above). However, nothing
+in [`services/api/src/routes/documents.ts`](services/api/src/routes/documents.ts) or its
+surrounding logging distinguishes these two cases server-side either. There is currently no
+log line, metric, or audit trail that would let an operator notice "org X is repeatedly
+requesting document ids that belong to org Y" — i.e. no way to detect active exploitation
+attempts of the very class of bug just fixed, or a client-side bug leaking ids across orgs.
+
+**Severity:** Medium (no data exposure by itself, but a real gap in the ability to detect
+abuse or regressions of Issue C going forward).
+**Impact:** A future regression of the Issue C fix, or an actual attempted exploitation,
+would be invisible in current logs/metrics — the team would only find out from a support
+report, not monitoring.
+**Next action:** Add a structured log line (without document content) when a lookup misses
+specifically *because* of an organisation mismatch (as opposed to a truly unknown id), and
+alert on a sustained rate of these from a single organisation — this is exactly the kind of
+signal called out in `PRODUCTION_NOTE.md`'s monitoring section.
