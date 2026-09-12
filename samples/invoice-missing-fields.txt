@@ -1,0 +1,4 @@
+Delivery note for Example Wayland Traders
+
+This document has no recognisable header fields for the extractor to pick up.
+Useful for checking the mock extractor's fallback defaults.

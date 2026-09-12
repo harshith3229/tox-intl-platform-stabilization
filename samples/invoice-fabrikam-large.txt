@@ -1,0 +1,4 @@
+INVOICE FB-9042
+Supplier: Example Fabrikam Manufacturing
+Total: INR 248750.00
+Date: 2026-08-28
