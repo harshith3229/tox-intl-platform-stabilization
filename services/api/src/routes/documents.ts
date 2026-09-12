@@ -64,7 +64,10 @@ router.get('/:id', async (req, res, next) => {
       return;
     }
 
-    const item = await DocumentRecord.findById(req.params.id)
+    const item = await DocumentRecord.findOne({
+      _id: req.params.id,
+      organisationId: req.demoUser.organisationId
+    })
       .select('-sourceText')
       .lean();
 

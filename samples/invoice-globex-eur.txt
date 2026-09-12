@@ -1,0 +1,4 @@
+INVOICE GX-5560
+Supplier: Example Globex Consulting
+Total: EUR 1875.00
+Date: 2026-09-05
